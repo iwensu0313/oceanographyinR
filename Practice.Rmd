@@ -1,0 +1,156 @@
+---
+title: "Oceanographic Analysis in R"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exploring `oce` and `ocedata` Packages
+
+## Load Packages
+```{r}
+
+library(oce)
+library(ocedata)
+library(devtools)
+
+# Set options, colors
+options(oceDebug=3)
+cm <- colormap(zlim=c(-2, 30), col=oceColorsJet)
+drawPalette(colormap=cm)
+
+```
+
+## Grab Data
+```{r}
+
+data(ctd, package="oce")
+data(levitus, package="ocedata")
+data(coastlineWorld, package="oce")
+
+head(ctd[["temperature"]])
+plot(ctd)
+# mapPlot(coastlineWorld, projection="+proj=moll", grid=FALSE)
+
+```
+
+# Four Key Analytical Tools
+
+* Linear Regression - `lm`
+* Differential Equations - `deSolve`
+* Type II Regression and Bootstrapping
+* Nonlinear Regression
+
+## Linear Regression
+
+Using Phosphate and Nitrate concentration data from Redfield (1934) found in `ocedata`.
+
+1. Get Data
+```{r}
+
+# Concentration of nitrate and phosphate
+data("redfieldNP", package = "ocedata")
+str(redfieldNP)
+
+```
+
+2. Plot Data
+```{r}
+
+# Plot Phosphate against Nitrate data collection points
+plot(redfieldNP$PO4, redfieldNP$NO3,
+     xlab=expression(PO[4]), ylab=expression(NO[3]))
+# Plot Redfield's N:P relationship
+abline(0,20, lwd=2)
+
+# Use linear regression model, predict NO3 according to PO4
+# The intercept is removed by using -1 in the regression formula
+m <- lm(NO3 ~ PO4-1, data=redfieldNP)
+abline(m, lty="dashed", lwd=2) # lwd is line width, lty is line type)
+
+legend("topleft", pch=c(1, NA, NA), # pch shows plotting symbols in legend
+       lty=c(NA, "solid", "dashed"), lwd=2, seg.len=2,
+       legend=c("Data","Redfield's line","Regression line"))
+```
+
+3. See Regression Summary
+```{r}
+summary(m)
+```
+
+4. Consider Plankton Concentrations
+Data is plankton mass expressed as percent of Carbon mass.
+```{r}
+# get plankton data
+data(redfieldPlankton, package="ocedata")
+
+# check average values
+mean(redfieldPlankton$Nitrogen, na.rm=TRUE)
+mean(redfieldPlankton$Phosphorus, na.rm=TRUE)
+```
+
+5. Apply t-test
+Compare data w/ Redfield's stated values. Say seawater nitrogen average value is 16.7. The mean value from the data is 15.45.
+
+Result: given that p-value is so large (0.4), it is hard to argue that plankton ratio is different from the seawater value.
+```{r}
+t.test(redfieldPlankton$Nitrogen, mu=16.7)
+```
+
+## Differential Equations
+Using data from Riley, who related phytoplankton concentration change over time to effects of photosynthesis, respiration, and grazing.
+
+1. Get Data and Plot
+```{r}
+library(deSolve) # used for numerical integration
+
+data(riley, package="ocedata")
+
+# plot temporal phytoplankton conc over time
+plot(riley$fig21points$day, riley$fig21points$P, pch=20,
+     xlab="Day", ylab="Phytoplankton")
+# add the lines 
+lines(riley$fig21curve$day, riley$fig21curve$P)
+```
+
+2. Create function
+
+Need to create function to describe right-hand side of equation: dP/dt = (Ph-R-G)*P. Time is given at ~2-week intervals, available in `riley$DEparameters`. `approxfun()` will be useful for creating linear interpolated data points (aka piecewise-linear variation?).
+```{r}
+
+# Setup piecewise-linear variation, each approx function takes time in day as an argument
+funPh <- approxfun(riley$DEparameters$day, riley$DEparameters$Ph)
+funR <- approxfun(riley$DEparameters$day, riley$DEparameters$R)
+funG <- approxfun(riley$DEparameters$day, riley$DEparameters$G)
+
+# Combine pieces into one function to integrate into `lsoda()`, first argument must be independent variable, followed by the dependent variable, then list of parameters as third
+myphytofunc <- function(t, P, parameters)
+  list((funPh(t) - funR(t) - funG(t))*P)
+
+```
+
+3. Combine 
+
+`lsoda` takes initial condition as its first argument, followed by vector of reported values, followed by function, then list of parameters (if parameters is NULL means function doesn't make use of these)
+```{r}
+init_condition = 3.4
+days_of_year = 1:365
+solution <- lsoda(init_condition, days_of_year, myphytofunc, NULL)
+```
+
+4. Replot
+```{r}
+# plot temporal phytoplankton conc over time
+plot(riley$fig21points$day, riley$fig21points$P, pch=20,
+     xlab="Day", ylab="Phytoplankton")
+# add the lines 
+lines(riley$fig21curve$day, riley$fig21curve$P)
+lines(solution[,1], solution[,2], lty="dashed")
+
+legend("topright", pch=c(20, NA, NA), # pch shows plotting symbols in legend
+       lty=c(NA, "solid", "dashed"), lwd=2, seg.len=2,
+       legend=c("Observations","Riley's solution","Present solution"))
+```
+
